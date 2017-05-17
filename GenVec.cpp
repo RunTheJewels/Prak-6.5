@@ -59,7 +59,7 @@ int main(int argc, char* argv[])
         MPI_File fh;
 
         MPI_File_open(MPI_COMM_WORLD, argv[2], MPI_MODE_CREATE|MPI_MODE_WRONLY, MPI_INFO_NULL, &fh);
-        MPI_File_write_at(fh, rank*loc_size*sizeof(complexd), a, loc_size, MPI_COMPLEX, &status);
+        MPI_File_write_at(fh, rank*loc_size*sizeof(complexd), a.data(), loc_size, MPI_COMPLEX, MPI_STATUS_IGNORE);
         MPI_File_close(&fh);
     }
     catch (const string& e) {

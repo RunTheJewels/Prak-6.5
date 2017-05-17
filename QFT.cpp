@@ -13,104 +13,77 @@ using namespace std;
 typedef std::complex<float> complexd;
 uint threads;
 
-void cubit(vector<complexd>& a, vector<complexd>& b, int loc_size, int N, int K1, int K2, complexd H[4][4]);
-
+const float pi = 3.14159265358;
 
 int rank = 0, comm_size;
 
-int main(int argc, char* argv[])
+void cubit(vector<complexd>& a, vector<complexd>& b, int loc_size, int N, int K, complexd H[2][2]);
+void cubit2(vector<complexd>& a, vector<complexd>& b, int loc_size, int N, int K1, int K2, complexd H[4][4]);
+
+complexd AD[2][2] = {1 / std::sqrt(2),1 / std::sqrt(2),1 / std::sqrt(2),-1 / std::sqrt(2)};
+
+void qft(vector<complexd>& a, vector<complexd>& b, int loc_size, int N)
 {
-    MPI_Init(&argc, &argv);
-    MPI_Comm_set_errhandler(MPI_COMM_WORLD, MPI_ERRORS_ARE_FATAL);
-
-    try
+    if (N == 1)
     {
-        MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
-        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-
-        if (argc != 5)
-            throw string("Wrong arguments");
-
-        uint N = atoi(argv[1]);
-        uint K1 = atoi(argv[2]);
-        uint K2 = atoi(argv[3]);
-        threads = atoi(argv[4]);
-
-        uint vec_size = (uint) pow((float) 2, (float) N);
-        if (vec_size % comm_size != 0 || (uint) comm_size > vec_size)
-            throw string("Wrong number of processors");
-
-        uint loc_size = vec_size / comm_size;
-
-        int seed = time(0);
-        double start_time, end_time, time_diff_comp = 0;
-        double all_times_comp[comm_size];
-
-        vector<complexd > a(loc_size), b(loc_size);
-
-        MPI_Bcast(&seed, 1, MPI_INT, 0, MPI_COMM_WORLD);
-        srand(seed + rank);
-
-        float sum = 0.0;
-        float all_sum = 0.0;
-        for (uint i = 0; i < loc_size; ++i)
-        {
-            a[i] = complexd((float) std::rand()/RAND_MAX, (float) std::rand()/RAND_MAX);
-            sum += std::abs(a[i])*std::abs(a[i]);
-        }
-
-        MPI_Allreduce(&all_sum, &sum, 1, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
-        all_sum = std::sqrt(all_sum);
-        for (uint i = 0; i < loc_size; ++i)
-        {
-            a[i] /= all_sum;
-        }
-
-        vector<complexd> all_res(vec_size*(rank==0));
-
-        MPI_Barrier(MPI_COMM_WORLD);
-        start_time = MPI_Wtime();
-
+        cubit(a,b,loc_size,1,1,AD);
+        a.swap(b);
+    } else
+    {
         complexd H[4][4];
         for (int i = 0; i < 16; i++)
         {
             H[i / 4][i % 4] = 0;
         }
-
-        H[0][0] = H[1][1] = H[2][3] = H[3][2] = 1;
-
-
-        cubit(a, b, loc_size, N, K1, K2, H);
-
-        end_time = MPI_Wtime();
-        time_diff_comp = end_time - start_time;
-
-        MPI_Gather(b.data(),loc_size,MPI_COMPLEX,all_res.data(),loc_size,MPI_COMPLEX,0,MPI_COMM_WORLD);
-
-        MPI_Gather(&time_diff_comp, 1, MPI_DOUBLE, all_times_comp, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-
-        if (rank == 0)
+        H[0][0] = H[1][1] = H[2][2] = H[3][3] = 1;
+        qft(a,b,loc_size,N-1);
+        a.swap(b);
+        for (int i = N-1; i > 0; i++)
         {
-            cout << comm_size << " " << threads << " " << N << " " << K1 << " "
-            << K2 << " " << *std::max_element(&all_times_comp[0], &all_times_comp[comm_size]) << endl;
+            H[3][3] = exp(pi/pow((float) 2, (float) i));
+            cubit2(a,b,loc_size,N,N,i,H);
+            a.swap(b);
         }
+        cubit(a,b,loc_size,N,N,AD);
+        a.swap(b);
     }
-    catch (const string& e) {
-        if (rank == 0)
-        cerr << e << endl;
-        MPI_Abort(MPI_COMM_WORLD, -1);
-    }
-    catch (const MPI::Exception& e) {
-        if (rank == 0)
-        cerr << "MPI Exception thrown" << endl;
-        MPI_Abort(MPI_COMM_WORLD, -1);
-    }
-
-    MPI_Finalize();
-    return 0;
 }
 
-void cubit(vector<complexd>& a, vector<complexd>& b, int loc_size, int N, int K1, int K2, complexd H[4][4])
+
+void cubit(vector<complexd>& a, vector<complexd>& b, int loc_size, int N, int K, complexd H[2][2])
+{
+    int P = N - K;
+    int stride = 1 << P;
+
+    if (stride < loc_size)
+    {
+        for (int i = 0; i < loc_size; ++i)
+        {
+            int j_1 = i & ~stride;
+            int j_2 = i | stride;
+            int u_i = !((i & stride) == 0);
+            b[i] = H[u_i][0] * a[j_1] + H[u_i][1] * a[j_2];
+        }
+    } else
+    {
+        int proc_stride = stride / loc_size;
+        vector<complexd> tmp(loc_size);
+
+        MPI_Send(a.data(),loc_size,MPI::COMPLEX,proc_stride^rank,0,MPI_COMM_WORLD);
+
+        MPI_Recv(tmp.data(),loc_size,MPI::COMPLEX,proc_stride^rank,0,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
+
+        for (int i = 0; i < loc_size; ++i)
+        {
+            if (!(rank & proc_stride))
+                b[i] = H[0][0] * a[i] + H[0][1] * tmp[i];
+            else
+                b[i] = -(H[1][0] * a[i] + H[1][1] * tmp[i]);
+        }
+    }
+}
+
+void cubit2(vector<complexd>& a, vector<complexd>& b, int loc_size, int N, int K1, int K2, complexd H[4][4])
 {
     int P1 = N - K1;
     int stride1 = 1 << P1;
@@ -208,4 +181,80 @@ void cubit(vector<complexd>& a, vector<complexd>& b, int loc_size, int N, int K1
 
         }
     }
+}
+
+
+int main(int argc, char* argv[])
+{
+    MPI_Init(&argc, &argv);
+    MPI_Comm_set_errhandler(MPI_COMM_WORLD, MPI_ERRORS_ARE_FATAL);
+
+    try
+    {
+        MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
+        MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+        if (argc != 5)
+            throw string("Wrong arguments");
+
+        uint N = atoi(argv[1]);
+        // uint  = atoi(argv[2]);
+        // uint K2 = atoi(argv[3]);
+        threads = atoi(argv[4]);
+
+        uint vec_size = (uint) pow((float) 2, (float) N);
+        if (vec_size % comm_size != 0 || (uint) comm_size > vec_size)
+            throw string("Wrong number of processors");
+
+        uint loc_size = vec_size / comm_size;
+
+        int seed = time(0);
+        double start_time, end_time, time_diff_comp = 0;
+        double all_times_comp[comm_size];
+
+        vector<complexd > a(loc_size), b(loc_size);
+
+        MPI_Bcast(&seed, 1, MPI_INT, 0, MPI_COMM_WORLD);
+        srand(seed + rank);
+
+        MPI_File fh;
+
+        MPI_File_open(MPI_COMM_WORLD, argv[2], MPI_MODE_CREATE|MPI_MODE_WRONLY, MPI_INFO_NULL, &fh);
+        MPI_File_read_at(fh, rank*loc_size*sizeof(complexd), a.data(), loc_size, MPI_COMPLEX, MPI_STATUS_IGNORE);
+        MPI_File_close(&fh);
+
+        vector<complexd> all_res(vec_size*(rank==0));
+
+        MPI_Barrier(MPI_COMM_WORLD);
+        start_time = MPI_Wtime();
+
+        qft(a, b, loc_size, N);
+
+        end_time = MPI_Wtime();
+        time_diff_comp = end_time - start_time;
+
+        MPI_Gather(a.data(),loc_size,MPI_COMPLEX,all_res.data(),loc_size,MPI_COMPLEX,0,MPI_COMM_WORLD);
+
+
+
+        MPI_Gather(&time_diff_comp, 1, MPI_DOUBLE, all_times_comp, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
+        if (rank == 0)
+        {
+            cout << comm_size << " " << threads << " " << N << " "  << *std::max_element(&all_times_comp[0], &all_times_comp[comm_size]) << endl;
+        }
+    }
+    catch (const string& e) {
+        if (rank == 0)
+        cerr << e << endl;
+        MPI_Abort(MPI_COMM_WORLD, -1);
+    }
+    catch (const MPI::Exception& e) {
+        if (rank == 0)
+        cerr << "MPI Exception thrown" << endl;
+        MPI_Abort(MPI_COMM_WORLD, -1);
+    }
+
+    MPI_Finalize();
+    return 0;
 }
