@@ -40,7 +40,7 @@ int main(int argc, char* argv[])
 
         MPI_Bcast(&seed, 1, MPI_INT, 0, MPI_COMM_WORLD);
         srand(seed + rank);
-
+        
         float sum = 0.0;
         float all_sum = 0.0;
         for (uint i = 0; i < loc_size; ++i)
@@ -48,9 +48,9 @@ int main(int argc, char* argv[])
             a[i] = complexd((float) std::rand()/RAND_MAX, (float) std::rand()/RAND_MAX);
             sum += std::abs(a[i])*std::abs(a[i]);
         }
-
-        MPI_Allreduce(&all_sum, &sum, 1, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
-        all_sum = std::sqrt(all_sum);
+        
+        
+        MPI_Allreduce(&sum, &all_sum, 1, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
         for (uint i = 0; i < loc_size; ++i)
         {
             a[i] /= all_sum;
