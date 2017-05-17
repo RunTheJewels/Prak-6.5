@@ -33,7 +33,7 @@ void qft(vector<complexd>& a, vector<complexd>& b, int loc_size, int N)
     } else
     {
         qft(a,b,loc_size,N-1);
-        a.swap(b);
+        // a.swap(b);
         for (int i = N-1; i > 0; i--)
         {
             H[3][3] = exp(pi/pow((float) 2, (float) i));
@@ -46,6 +46,7 @@ void qft(vector<complexd>& a, vector<complexd>& b, int loc_size, int N)
     for (int i = 1; i < N / 2; i++)
     {
         cubit2(a,b,loc_size,N,i,N-i+1,swapqbits);
+        a.swap(b);
     }
 }
 
@@ -235,8 +236,14 @@ int main(int argc, char* argv[])
         time_diff_comp = end_time - start_time;
 
         MPI_Gather(a.data(),loc_size,MPI_COMPLEX,all_res.data(),loc_size,MPI_COMPLEX,0,MPI_COMM_WORLD);
-
-
+        
+        if (rank == 0)
+        {
+            FILE* f;
+            f = fopen(argv[3],"wb");
+            fwrite(all_res.data(),sizeof(complexd),vec_size,f);
+            fclose(f);
+        }
 
         MPI_Gather(&time_diff_comp, 1, MPI_DOUBLE, all_times_comp, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
