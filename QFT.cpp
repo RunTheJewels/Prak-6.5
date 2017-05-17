@@ -21,6 +21,8 @@ void cubit(vector<complexd>& a, vector<complexd>& b, int loc_size, int N, int K,
 void cubit2(vector<complexd>& a, vector<complexd>& b, int loc_size, int N, int K1, int K2, complexd H[4][4]);
 
 complexd AD[2][2] = {1 / std::sqrt(2),1 / std::sqrt(2),1 / std::sqrt(2),-1 / std::sqrt(2)};
+complexd H[4][4] = {1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
+complexd swapqbits[4][4] = {1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1};
 
 void qft(vector<complexd>& a, vector<complexd>& b, int loc_size, int N)
 {
@@ -30,15 +32,9 @@ void qft(vector<complexd>& a, vector<complexd>& b, int loc_size, int N)
         a.swap(b);
     } else
     {
-        complexd H[4][4];
-        for (int i = 0; i < 16; i++)
-        {
-            H[i / 4][i % 4] = 0;
-        }
-        H[0][0] = H[1][1] = H[2][2] = H[3][3] = 1;
         qft(a,b,loc_size,N-1);
         a.swap(b);
-        for (int i = N-1; i > 0; i++)
+        for (int i = N-1; i > 0; i--)
         {
             H[3][3] = exp(pi/pow((float) 2, (float) i));
             cubit2(a,b,loc_size,N,N,i,H);
@@ -47,6 +43,10 @@ void qft(vector<complexd>& a, vector<complexd>& b, int loc_size, int N)
         cubit(a,b,loc_size,N,N,AD);
         a.swap(b);
     }
+    for (int i = 1; i < N / 2; i++)
+    {
+        cubit2(a,b,loc_size,N,i,N-i+1,swapqbits);
+    }
 }
 
 
@@ -54,9 +54,9 @@ void cubit(vector<complexd>& a, vector<complexd>& b, int loc_size, int N, int K,
 {
     int P = N - K;
     int stride = 1 << P;
-
     if (stride < loc_size)
     {
+        #pragma omp parallel for num_threads(threads)
         for (int i = 0; i < loc_size; ++i)
         {
             int j_1 = i & ~stride;
@@ -72,7 +72,7 @@ void cubit(vector<complexd>& a, vector<complexd>& b, int loc_size, int N, int K,
         MPI_Send(a.data(),loc_size,MPI::COMPLEX,proc_stride^rank,0,MPI_COMM_WORLD);
 
         MPI_Recv(tmp.data(),loc_size,MPI::COMPLEX,proc_stride^rank,0,MPI_COMM_WORLD,MPI_STATUS_IGNORE);
-
+        #pragma omp parallel for num_threads(threads)
         for (int i = 0; i < loc_size; ++i)
         {
             if (!(rank & proc_stride))
@@ -212,7 +212,7 @@ int main(int argc, char* argv[])
         double start_time, end_time, time_diff_comp = 0;
         double all_times_comp[comm_size];
 
-        vector<complexd > a(loc_size), b(loc_size);
+        vector<complexd> a(loc_size), b(loc_size);
 
         MPI_Bcast(&seed, 1, MPI_INT, 0, MPI_COMM_WORLD);
         srand(seed + rank);
@@ -222,14 +222,15 @@ int main(int argc, char* argv[])
         MPI_File_open(MPI_COMM_WORLD, argv[2], MPI_MODE_CREATE|MPI_MODE_WRONLY, MPI_INFO_NULL, &fh);
         MPI_File_read_at(fh, rank*loc_size*sizeof(complexd), a.data(), loc_size, MPI_COMPLEX, MPI_STATUS_IGNORE);
         MPI_File_close(&fh);
-
+        
+        
         vector<complexd> all_res(vec_size*(rank==0));
 
         MPI_Barrier(MPI_COMM_WORLD);
         start_time = MPI_Wtime();
-
+        
         qft(a, b, loc_size, N);
-
+        
         end_time = MPI_Wtime();
         time_diff_comp = end_time - start_time;
 
