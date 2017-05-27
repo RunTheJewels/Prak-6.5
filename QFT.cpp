@@ -7,47 +7,45 @@
 #include <string>
 #include "mpi.h"
 #include <omp.h>
-
+#include <stdio.h>
 
 using namespace std;
 typedef std::complex<float> complexd;
 uint threads;
 
-const float pi = 3.14159265358;
+complexd operator*(complexd a, complexd b)
+{
+  return complexd(a.real()*b.real()-a.imag()*b.imag(),a.real()*b.imag()+a.imag()*b.real());
+}
+
+const complexd pi = (3.14159265358,0);
 
 int rank = 0, comm_size;
 
 void cubit(vector<complexd>& a, vector<complexd>& b, int loc_size, int N, int K, complexd H[2][2]);
 void cubit2(vector<complexd>& a, vector<complexd>& b, int loc_size, int N, int K1, int K2, complexd H[4][4]);
 
-complexd AD[2][2] = {1 / std::sqrt(2),1 / std::sqrt(2),1 / std::sqrt(2),-1 / std::sqrt(2)};
-complexd H[4][4] = {1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
-complexd swapqbits[4][4] = {1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1};
+complexd AD[2][2] = {0.707107,0.707107,0.707107,-0.707107};
+complexd H[4][4] = {{1,0,0,0},{0,1,0,0},{0,0,1,0},{0,0,0,1}};
+complexd swapqbits[4][4] = {{1,0,0,0},{0,0,1,0},{0,1,0,0},{0,0,0,1}};
 
 void qft(vector<complexd>& a, vector<complexd>& b, int loc_size, int N)
 {
-    if (N == 1)
-    {
-        cubit(a,b,loc_size,1,1,AD);
-        a.swap(b);
-    } else
-    {
-        qft(a,b,loc_size,N-1);
-        // a.swap(b);
-        for (int i = N-1; i > 0; i--)
-        {
-            H[3][3] = exp(pi/pow((float) 2, (float) i));
-            cubit2(a,b,loc_size,N,N,i,H);
-            a.swap(b);
-        }
-        cubit(a,b,loc_size,N,N,AD);
-        a.swap(b);
-    }
-    for (int i = 1; i < N / 2; i++)
-    {
-        cubit2(a,b,loc_size,N,i,N-i+1,swapqbits);
-        a.swap(b);
-    }
+
+  for(uint i=1; i<=N; ++i) {
+      for(uint j=1; j<i; ++j) {
+          H[3][3] = exp(complexd(0,1) * pi / pow((float)2, (float)j));
+          cubit2(a, b, loc_size, N, i, j, H);
+          a.swap(b);
+      }
+      cubit(a, b,loc_size, N, i, AD);
+      a.swap(b);
+  }
+
+  for(uint i=1; i<N/2; ++i) {
+      cubit2(a, b, loc_size, N, i, N-i+1, swapqbits);
+      a.swap(b);
+  }
 }
 
 
@@ -57,13 +55,16 @@ void cubit(vector<complexd>& a, vector<complexd>& b, int loc_size, int N, int K,
     int stride = 1 << P;
     if (stride < loc_size)
     {
-        #pragma omp parallel for num_threads(threads)
+        #pragma omp parallel for num_threads(threads) shared(a,b)
         for (int i = 0; i < loc_size; ++i)
         {
             int j_1 = i & ~stride;
             int j_2 = i | stride;
             int u_i = !((i & stride) == 0);
-            b[i] = H[u_i][0] * a[j_1] + H[u_i][1] * a[j_2];
+            b[i] = (H[u_i][0] * a[j_1]) + (H[u_i][1] * a[j_2]);
+            printf("b[%d] = H[%d][0] * a[%d] + H[%d][1] * a[%d] = ",i,u_i,j_1,u_i,j_2);
+            cout << H[u_i][0] << " * " << a[j_1] << " + " << H[u_i][1] << " * " <<
+             a[j_2] << " = " << b[i] << endl;
         }
     } else
     {
@@ -220,30 +221,26 @@ int main(int argc, char* argv[])
 
         MPI_File fh;
 
-        MPI_File_open(MPI_COMM_WORLD, argv[2], MPI_MODE_CREATE|MPI_MODE_WRONLY, MPI_INFO_NULL, &fh);
+        MPI_File_open(MPI_COMM_WORLD, argv[2], MPI_MODE_RDONLY, MPI_INFO_NULL, &fh);
         MPI_File_read_at(fh, rank*loc_size*sizeof(complexd), a.data(), loc_size, MPI_COMPLEX, MPI_STATUS_IGNORE);
         MPI_File_close(&fh);
-        
-        
-        vector<complexd> all_res(vec_size*(rank==0));
+
+
 
         MPI_Barrier(MPI_COMM_WORLD);
         start_time = MPI_Wtime();
-        
+
         qft(a, b, loc_size, N);
-        
+
+
         end_time = MPI_Wtime();
         time_diff_comp = end_time - start_time;
 
-        MPI_Gather(a.data(),loc_size,MPI_COMPLEX,all_res.data(),loc_size,MPI_COMPLEX,0,MPI_COMM_WORLD);
-        
-        if (rank == 0)
-        {
-            FILE* f;
-            f = fopen(argv[3],"wb");
-            fwrite(all_res.data(),sizeof(complexd),vec_size,f);
-            fclose(f);
-        }
+
+        MPI_File_open(MPI_COMM_WORLD, argv[3], MPI_MODE_CREATE|MPI_MODE_WRONLY, MPI_INFO_NULL, &fh);
+        MPI_File_write_at(fh, rank*loc_size*sizeof(complexd), a.data(), loc_size, MPI_COMPLEX, MPI_STATUS_IGNORE);
+        MPI_File_close(&fh);
+
 
         MPI_Gather(&time_diff_comp, 1, MPI_DOUBLE, all_times_comp, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 

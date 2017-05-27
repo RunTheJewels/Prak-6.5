@@ -43,7 +43,7 @@ int main(int argc, char* argv[])
         
         float sum = 0.0;
         float all_sum = 0.0;
-        for (uint i = 0; i < loc_size; ++i)
+	for (int i = 0; i < loc_size; ++i)
         {
             a[i] = complexd((float) std::rand()/RAND_MAX, (float) std::rand()/RAND_MAX);
             sum += std::abs(a[i])*std::abs(a[i]);
@@ -51,7 +51,7 @@ int main(int argc, char* argv[])
         
         
         MPI_Allreduce(&sum, &all_sum, 1, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
-        for (uint i = 0; i < loc_size; ++i)
+	for (int i = 0; i < loc_size; ++i)
         {
             a[i] /= all_sum;
         }
