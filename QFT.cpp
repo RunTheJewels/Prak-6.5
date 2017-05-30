@@ -42,10 +42,6 @@ void qft(vector<complexd>& a, vector<complexd>& b, int loc_size, int N)
       a.swap(b);
   }
 
-  for(uint i=1; i<N/2; ++i) {
-      cubit2(a, b, loc_size, N, i, N-i+1, swapqbits);
-      a.swap(b);
-  }
 }
 
 
